@@ -16,6 +16,12 @@ export const backwardPawnItem: ShopItem = {
   cost: 2,
 };
 
-export const allShopItems: ShopItem[] = [suicideBishopItem, backwardPawnItem];
+export const battleTrainedItem: ShopItem = {
+  id: 'battle-trained',
+  name: 'Battle Trained Horse',
+  description:
+    'Permanently allows your knights to make an immediate bonus move after capturing a piece. The bonus move cannot capture or give check.',
+  cost: 8,
+};
 
-//export const allShopItems: ShopItem[] = [suicideBishopItem];
+export const allShopItems: ShopItem[] = [suicideBishopItem, backwardPawnItem, battleTrainedItem];

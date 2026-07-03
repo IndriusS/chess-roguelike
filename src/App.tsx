@@ -17,6 +17,8 @@ function App() {
   ownBishopSquares,
   explodingSquares,
   pendingPromotion,
+  bonusMoveAvailable,
+  skipBonusMove,
   onPieceDrop,
   armShop,
   buyItem,
@@ -182,6 +184,24 @@ const chessboardOptions = {
   </div>
 )}
 
+{bonusMoveAvailable && (
+  <div
+    style={{
+      textAlign: 'center',
+      marginTop: '10px',
+      border: '1px solid #999',
+      borderRadius: '6px',
+      padding: '8px',
+    }}
+  >
+    <strong>Bonus move! Move your knight on {bonusMoveAvailable.square}, or skip it.</strong>
+    <div>
+      <button onClick={skipBonusMove} style={{ margin: '4px' }}>
+        Skip Bonus Move
+      </button>
+    </div>
+  </div>
+)}
 
 
     </div>

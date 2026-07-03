@@ -15,8 +15,6 @@ const SOUL_VALUES: Record<string, number> = {
 
 type Color = 'w' | 'b';
 
-
-
 function buildStartingPosition(activeMutators: Mutator[]): string {
   return activeMutators.reduce(
     (fen, mutator) => mutator.applyToStartingPosition(fen),
@@ -50,27 +48,44 @@ function getBlastSquares(square: string): string[] {
 function tryBackwardPawnMove(gameCopy: Chess, from: string, to: string, color: Color): boolean {
   const piece = gameCopy.get(from as any);
   if (!piece || piece.type !== 'p' || piece.color !== color) return false;
-  if (from[0] !== to[0]) return false; // must stay on the same file, no diagonals
+  if (from[0] !== to[0]) return false;
 
   const fromRank = parseInt(from[1], 10);
   const toRank = parseInt(to[1], 10);
   const expectedRank = color === 'w' ? fromRank - 1 : fromRank + 1;
-  if (toRank !== expectedRank) return false; // must be exactly one square back
+  if (toRank !== expectedRank) return false;
 
-  if ((color === 'w' && toRank === 1) || (color === 'b' && toRank === 8)) return false; // can't retreat onto the back rank
+  if ((color === 'w' && toRank === 1) || (color === 'b' && toRank === 8)) return false;
 
-  if (gameCopy.get(to as any)) return false; // no capturing backward, target must be empty
+  if (gameCopy.get(to as any)) return false;
 
   gameCopy.remove(from as any);
   gameCopy.put({ type: 'p', color }, to as any);
 
-  // Not a chess.js-recognized move, so flip the turn manually
   const fenParts = gameCopy.fen().split(' ');
   fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
   fenParts[3] = '-';
   gameCopy.load(fenParts.join(' '));
 
   return true;
+}
+
+function getKnightTargets(square: string): string[] {
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1], 10) - 1;
+  const offsets = [
+    [1, 2], [2, 1], [2, -1], [1, -2],
+    [-1, -2], [-2, -1], [-2, 1], [-1, 2],
+  ];
+  const squares: string[] = [];
+  for (const [df, dr] of offsets) {
+    const f = file + df;
+    const r = rank + dr;
+    if (f >= 0 && f <= 7 && r >= 0 && r <= 7) {
+      squares.push(String.fromCharCode(97 + f) + (r + 1));
+    }
+  }
+  return squares;
 }
 
 export function useChessGame(activeMutators: Mutator[]) {
@@ -85,21 +100,83 @@ export function useChessGame(activeMutators: Mutator[]) {
   const [customGameOver, setCustomGameOver] = useState<{ winner: Color; reason: string } | null>(
     null
   );
-
   const [explodingSquares, setExplodingSquares] = useState<string[]>([]);
   const [pendingPromotion, setPendingPromotion] = useState<{
-  from: string;
-  to: string;
-} | null>(null);
-const onPieceDrop = useCallback(
+    from: string;
+    to: string;
+  } | null>(null);
+  const [bonusMoveAvailable, setBonusMoveAvailable] = useState<{
+    square: string;
+    color: Color;
+  } | null>(null);
+
+  const resolveBonusMove = useCallback(
+    (targetSquare: string) => {
+      if (!bonusMoveAvailable) return false;
+      const { square: fromSquare, color } = bonusMoveAvailable;
+
+      if (!getKnightTargets(fromSquare).includes(targetSquare)) return false;
+
+      const gameCopy = new Chess(game.fen());
+      if (gameCopy.get(targetSquare as any)) return false;
+
+      const piece = gameCopy.get(fromSquare as any);
+      if (!piece || piece.type !== 'n' || piece.color !== color) return false;
+
+      gameCopy.remove(fromSquare as any);
+      gameCopy.put({ type: 'n', color }, targetSquare as any);
+
+      const opponent: Color = color === 'w' ? 'b' : 'w';
+      const checkParts = gameCopy.fen().split(' ');
+      checkParts[1] = opponent;
+      const checkInstance = new Chess(checkParts.join(' '));
+      if (checkInstance.inCheck()) return false;
+
+      const finalParts = gameCopy.fen().split(' ');
+      finalParts[1] = opponent;
+      finalParts[3] = '-';
+      setGame(new Chess(finalParts.join(' ')));
+      setBonusMoveAvailable(null);
+
+      if (shopArmed) {
+        setShopOpenFor(color);
+        setShopArmed(false);
+      }
+
+      return true;
+    },
+    [bonusMoveAvailable, game, shopArmed]
+  );
+
+  const skipBonusMove = useCallback(() => {
+    if (!bonusMoveAvailable) return;
+    const { color } = bonusMoveAvailable;
+    const opponent: Color = color === 'w' ? 'b' : 'w';
+    const fenParts = game.fen().split(' ');
+    fenParts[1] = opponent;
+    fenParts[3] = '-';
+    setGame(new Chess(fenParts.join(' ')));
+    setBonusMoveAvailable(null);
+
+    if (shopArmed) {
+      setShopOpenFor(color);
+      setShopArmed(false);
+    }
+  }, [bonusMoveAvailable, game, shopArmed]);
+
+  const onPieceDrop = useCallback(
     ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }) => {
       if (!targetSquare || customGameOver) return false;
+
+      if (bonusMoveAvailable) {
+        if (sourceSquare !== bonusMoveAvailable.square) return false;
+        return resolveBonusMove(targetSquare);
+      }
 
       const mover = game.turn();
       const gameCopy = new Chess(game.fen());
 
       if (isPromotionMove(gameCopy, sourceSquare, targetSquare)) {
-        // Confirm it's actually a legal move before opening the promotion picker
         const testMove = new Chess(game.fen());
         try {
           const legalCheck = testMove.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
@@ -121,6 +198,20 @@ const onPieceDrop = useCallback(
             const soulValue = SOUL_VALUES[targetPieceBefore.type] ?? 0;
             setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
           }
+
+          const isBattleTrainedCapture =
+            move.piece === 'n' &&
+            !!move.captured &&
+            (abilities[mover]['battle-trained'] ?? 0) > 0;
+
+          if (isBattleTrainedCapture) {
+            const fenParts = gameCopy.fen().split(' ');
+            fenParts[1] = mover;
+            setGame(new Chess(fenParts.join(' ')));
+            setBonusMoveAvailable({ square: move.to, color: mover });
+            return true;
+          }
+
           setGame(gameCopy);
           if (shopArmed) {
             setShopOpenFor(mover);
@@ -129,7 +220,7 @@ const onPieceDrop = useCallback(
           return true;
         }
       } catch {
-        // Not a legal chess.js move — fall through to check the backward-pawn case
+        // fall through to backward-pawn check
       }
 
       if ((abilities[mover]['backward-pawn'] ?? 0) > 0) {
@@ -146,7 +237,7 @@ const onPieceDrop = useCallback(
 
       return false;
     },
-    [game, shopArmed, customGameOver, abilities]
+    [game, shopArmed, customGameOver, abilities, bonusMoveAvailable, resolveBonusMove]
   );
 
   const armShop = useCallback(() => {
@@ -207,7 +298,7 @@ const onPieceDrop = useCallback(
     setShopOpenFor(null);
   }, []);
 
-const detonateBishop = useCallback(
+  const detonateBishop = useCallback(
     (square: string) => {
       const color = game.turn();
       if ((abilities[color]['suicide-bishop'] ?? 0) <= 0) return;
@@ -215,7 +306,6 @@ const detonateBishop = useCallback(
       const opponent: Color = color === 'w' ? 'b' : 'w';
       const blastSquares = getBlastSquares(square);
 
-      // Phase 1: flash the blast radius while pieces are still on the board
       setExplodingSquares(blastSquares);
 
       setTimeout(() => {
@@ -258,7 +348,6 @@ const detonateBishop = useCallback(
           setGame(new Chess(fenParts.join(' ')));
         }
 
-        // Phase 2: let the flash linger briefly on the now-empty squares, then clear it
         setTimeout(() => setExplodingSquares([]), 300);
       }, 250);
     },
@@ -287,7 +376,7 @@ const detonateBishop = useCallback(
     setCustomGameOver(null);
   }, [activeMutators]);
 
-return {
+  return {
     game,
     souls,
     abilities,
@@ -297,6 +386,8 @@ return {
     ownBishopSquares,
     explodingSquares,
     pendingPromotion,
+    bonusMoveAvailable,
+    skipBonusMove,
     onPieceDrop,
     armShop,
     buyItem,
@@ -306,4 +397,3 @@ return {
     resetGame,
   };
 }
-
