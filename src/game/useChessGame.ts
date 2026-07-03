@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo } from 'react';
 import { Chess } from 'chess.js';
 import type { Mutator, ShopItem } from '../roguelike/types';
 
-const [explodingSquares, setExplodingSquares] = useState<string[]>([]);
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 const SOUL_VALUES: Record<string, number> = {
@@ -16,11 +15,20 @@ const SOUL_VALUES: Record<string, number> = {
 
 type Color = 'w' | 'b';
 
+
+
 function buildStartingPosition(activeMutators: Mutator[]): string {
   return activeMutators.reduce(
     (fen, mutator) => mutator.applyToStartingPosition(fen),
     STARTING_FEN
   );
+}
+
+function isPromotionMove(gameCopy: Chess, from: string, to: string): boolean {
+  const piece = gameCopy.get(from as any);
+  if (!piece || piece.type !== 'p') return false;
+  const toRank = parseInt(to[1], 10);
+  return (piece.color === 'w' && toRank === 8) || (piece.color === 'b' && toRank === 1);
 }
 
 function getBlastSquares(square: string): string[] {
@@ -39,6 +47,32 @@ function getBlastSquares(square: string): string[] {
   return squares;
 }
 
+function tryBackwardPawnMove(gameCopy: Chess, from: string, to: string, color: Color): boolean {
+  const piece = gameCopy.get(from as any);
+  if (!piece || piece.type !== 'p' || piece.color !== color) return false;
+  if (from[0] !== to[0]) return false; // must stay on the same file, no diagonals
+
+  const fromRank = parseInt(from[1], 10);
+  const toRank = parseInt(to[1], 10);
+  const expectedRank = color === 'w' ? fromRank - 1 : fromRank + 1;
+  if (toRank !== expectedRank) return false; // must be exactly one square back
+
+  if ((color === 'w' && toRank === 1) || (color === 'b' && toRank === 8)) return false; // can't retreat onto the back rank
+
+  if (gameCopy.get(to as any)) return false; // no capturing backward, target must be empty
+
+  gameCopy.remove(from as any);
+  gameCopy.put({ type: 'p', color }, to as any);
+
+  // Not a chess.js-recognized move, so flip the turn manually
+  const fenParts = gameCopy.fen().split(' ');
+  fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+  fenParts[3] = '-';
+  gameCopy.load(fenParts.join(' '));
+
+  return true;
+}
+
 export function useChessGame(activeMutators: Mutator[]) {
   const [game, setGame] = useState(() => new Chess(buildStartingPosition(activeMutators)));
   const [souls, setSouls] = useState<Record<Color, number>>({ w: 0, b: 0 });
@@ -52,42 +86,106 @@ export function useChessGame(activeMutators: Mutator[]) {
     null
   );
 
-  const onPieceDrop = useCallback(
+  const [explodingSquares, setExplodingSquares] = useState<string[]>([]);
+  const [pendingPromotion, setPendingPromotion] = useState<{
+  from: string;
+  to: string;
+} | null>(null);
+const onPieceDrop = useCallback(
     ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }) => {
       if (!targetSquare || customGameOver) return false;
 
       const mover = game.turn();
       const gameCopy = new Chess(game.fen());
+
+      if (isPromotionMove(gameCopy, sourceSquare, targetSquare)) {
+        // Confirm it's actually a legal move before opening the promotion picker
+        const testMove = new Chess(game.fen());
+        try {
+          const legalCheck = testMove.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
+          if (legalCheck === null) return false;
+        } catch {
+          return false;
+        }
+        setPendingPromotion({ from: sourceSquare, to: targetSquare });
+        return true;
+      }
+
       const targetPieceBefore = gameCopy.get(targetSquare as any);
 
       try {
         const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
-        if (move === null) return false;
-
-        if (targetPieceBefore) {
-          const lostColor = targetPieceBefore.color as Color;
-          const soulValue = SOUL_VALUES[targetPieceBefore.type] ?? 0;
-          setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
+        if (move !== null) {
+          if (targetPieceBefore) {
+            const lostColor = targetPieceBefore.color as Color;
+            const soulValue = SOUL_VALUES[targetPieceBefore.type] ?? 0;
+            setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
+          }
+          setGame(gameCopy);
+          if (shopArmed) {
+            setShopOpenFor(mover);
+            setShopArmed(false);
+          }
+          return true;
         }
-
-        setGame(gameCopy);
-
-        if (shopArmed) {
-          setShopOpenFor(mover);
-          setShopArmed(false);
-        }
-
-        return true;
       } catch {
-        return false;
+        // Not a legal chess.js move — fall through to check the backward-pawn case
       }
+
+      if ((abilities[mover]['backward-pawn'] ?? 0) > 0) {
+        const retreated = tryBackwardPawnMove(gameCopy, sourceSquare, targetSquare, mover);
+        if (retreated) {
+          setGame(gameCopy);
+          if (shopArmed) {
+            setShopOpenFor(mover);
+            setShopArmed(false);
+          }
+          return true;
+        }
+      }
+
+      return false;
     },
-    [game, shopArmed, customGameOver]
+    [game, shopArmed, customGameOver, abilities]
   );
 
   const armShop = useCallback(() => {
     setShopArmed((prev) => !prev);
   }, []);
+
+  const choosePromotion = useCallback(
+    (pieceType: 'q' | 'r' | 'b' | 'n') => {
+      if (!pendingPromotion) return;
+      const mover = game.turn();
+      const gameCopy = new Chess(game.fen());
+      const targetPieceBefore = gameCopy.get(pendingPromotion.to as any);
+
+      const move = gameCopy.move({
+        from: pendingPromotion.from,
+        to: pendingPromotion.to,
+        promotion: pieceType,
+      });
+      if (move === null) {
+        setPendingPromotion(null);
+        return;
+      }
+
+      if (targetPieceBefore) {
+        const lostColor = targetPieceBefore.color as Color;
+        const soulValue = SOUL_VALUES[targetPieceBefore.type] ?? 0;
+        setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
+      }
+
+      setGame(gameCopy);
+      setPendingPromotion(null);
+
+      if (shopArmed) {
+        setShopOpenFor(mover);
+        setShopArmed(false);
+      }
+    },
+    [pendingPromotion, game, shopArmed]
+  );
 
   const buyItem = useCallback(
     (item: ShopItem) => {
@@ -146,14 +244,6 @@ const detonateBishop = useCallback(
           setSouls((prev) => ({ ...prev, [opponent]: prev[opponent] + totalSoulsFromBlast }));
         }
 
-        setAbilities((prev) => ({
-          ...prev,
-          [color]: {
-            ...prev[color],
-            'suicide-bishop': Math.max(0, (prev[color]['suicide-bishop'] ?? 0) - 1),
-          },
-        }));
-
         if (kingDestroyed) {
           const winner: Color = kingDestroyed === 'w' ? 'b' : 'w';
           setCustomGameOver({
@@ -198,20 +288,22 @@ const detonateBishop = useCallback(
   }, [activeMutators]);
 
 return {
-  game,
-  souls,
-  abilities,
-  shopArmed,
-  shopOpenFor,
-  customGameOver,
-  ownBishopSquares,
-  explodingSquares,
-  onPieceDrop,
-  armShop,
-  buyItem,
-  closeShop,
-  detonateBishop,
-  resetGame,
-};
+    game,
+    souls,
+    abilities,
+    shopArmed,
+    shopOpenFor,
+    customGameOver,
+    ownBishopSquares,
+    explodingSquares,
+    pendingPromotion,
+    onPieceDrop,
+    armShop,
+    buyItem,
+    closeShop,
+    detonateBishop,
+    choosePromotion,
+    resetGame,
+  };
 }
 
