@@ -88,27 +88,47 @@ function getKnightTargets(square: string): string[] {
   return squares;
 }
 
+function getSoulValueForCapture(
+  capturedPiece: { type: string; color: Color },
+  abilities: Record<Color, Record<string, number>>
+): number {
+  if (capturedPiece.type === 'r' && (abilities[capturedPiece.color]['sacrifice-rook'] ?? 0) > 0) {
+    return 13;
+  }
+  return SOUL_VALUES[capturedPiece.type] ?? 0;
+}
+
+
 export function useChessGame(activeMutators: Mutator[]) {
   const [game, setGame] = useState(() => new Chess(buildStartingPosition(activeMutators)));
+
   const [souls, setSouls] = useState<Record<Color, number>>({ w: 0, b: 0 });
+
   const [abilities, setAbilities] = useState<Record<Color, Record<string, number>>>({
     w: {},
     b: {},
   });
   const [shopArmed, setShopArmed] = useState(false);
+
   const [shopOpenFor, setShopOpenFor] = useState<Color | null>(null);
+
   const [customGameOver, setCustomGameOver] = useState<{ winner: Color; reason: string } | null>(
     null
   );
+
   const [explodingSquares, setExplodingSquares] = useState<string[]>([]);
+
   const [pendingPromotion, setPendingPromotion] = useState<{
     from: string;
     to: string;
   } | null>(null);
+
   const [bonusMoveAvailable, setBonusMoveAvailable] = useState<{
     square: string;
     color: Color;
   } | null>(null);
+
+  const [rookSacrificeBanner, setRookSacrificeBanner] = useState(false);
 
   const resolveBonusMove = useCallback(
     (targetSquare: string) => {
@@ -195,8 +215,12 @@ export function useChessGame(activeMutators: Mutator[]) {
         if (move !== null) {
           if (targetPieceBefore) {
             const lostColor = targetPieceBefore.color as Color;
-            const soulValue = SOUL_VALUES[targetPieceBefore.type] ?? 0;
+            const soulValue = getSoulValueForCapture(targetPieceBefore, abilities);
             setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
+            if (targetPieceBefore.type === 'r' && soulValue === 13) {
+              setRookSacrificeBanner(true);
+              setTimeout(() => setRookSacrificeBanner(false), 2500);
+            }
           }
 
           const isBattleTrainedCapture =
@@ -262,10 +286,14 @@ export function useChessGame(activeMutators: Mutator[]) {
       }
 
       if (targetPieceBefore) {
-        const lostColor = targetPieceBefore.color as Color;
-        const soulValue = SOUL_VALUES[targetPieceBefore.type] ?? 0;
-        setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
-      }
+            const lostColor = targetPieceBefore.color as Color;
+            const soulValue = getSoulValueForCapture(targetPieceBefore, abilities);
+            setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
+            if (targetPieceBefore.type === 'r' && soulValue === 13) {
+              setRookSacrificeBanner(true);
+              setTimeout(() => setRookSacrificeBanner(false), 2500);
+            }
+          }
 
       setGame(gameCopy);
       setPendingPromotion(null);
@@ -387,6 +415,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     explodingSquares,
     pendingPromotion,
     bonusMoveAvailable,
+    rookSacrificeBanner,
     skipBonusMove,
     onPieceDrop,
     armShop,

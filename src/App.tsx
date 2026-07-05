@@ -3,6 +3,7 @@ import { Chessboard } from 'react-chessboard';
 import { useChessGame } from './game/useChessGame';
 import { allMutators } from './roguelike/mutators';
 import { allShopItems } from './roguelike/shop';
+console.log('Shop items:', allShopItems);
 import type { Mutator } from './roguelike/types';
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
   explodingSquares,
   pendingPromotion,
   bonusMoveAvailable,
+  rookSacrificeBanner,
   skipBonusMove,
   onPieceDrop,
   armShop,
@@ -52,6 +54,27 @@ const chessboardOptions = {
 
   return (
     <div style={{ width: '520px', margin: '40px auto' }}>
+
+{rookSacrificeBanner && (
+  <div
+    style={{
+      position: 'fixed',
+      top: '30%',
+      left: 0,
+      width: '100%',
+      textAlign: 'center',
+      fontSize: '3em',
+      fontWeight: 'bold',
+      color: 'crimson',
+      textShadow: '2px 2px 4px black',
+      pointerEvents: 'none',
+      zIndex: 1000,
+    }}
+  >
+    THE ROOOOOOOOOOK!!!
+  </div>
+)}
+
       <h1 style={{ textAlign: 'center' }}>Chess Roguelike</h1>
 
       <Chessboard options={chessboardOptions} />
@@ -136,7 +159,14 @@ const chessboardOptions = {
             justifyContent: 'center',
           }}
         >
-          <div style={{ background: 'white', padding: '20px', borderRadius: '8px', width: '320px' }}>
+          <div style={{ 
+            background: 'white',
+            padding: '20px',
+            borderRadius: '8px', 
+            width: '320px', 
+            maxHeight: '80vh',       // FIX: Limits height to 80% of the viewport
+            overflowY: 'auto',       // FIX: Adds a scrollbar if items overflow
+            }}>
             <h2>Souls Shop — {shopOpenFor === 'w' ? 'White' : 'Black'}</h2>
             <p>Souls available: {souls[shopOpenFor]}</p>
             {allShopItems.map((item) => {

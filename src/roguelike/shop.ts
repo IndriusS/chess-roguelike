@@ -24,4 +24,11 @@ export const battleTrainedItem: ShopItem = {
   cost: 8,
 };
 
-export const allShopItems: ShopItem[] = [suicideBishopItem, backwardPawnItem, battleTrainedItem];
+export const sacrificeRookItem: ShopItem = {
+  id: 'sacrifice-rook',
+  name: 'SACRIFICES... THE ROOOOOOK!',
+  description: 'When one of your rooks is captured, you gain 13 souls instead of the normal amount.',
+  cost: 3,
+};
+
+export const allShopItems: ShopItem[] = [suicideBishopItem, backwardPawnItem, battleTrainedItem, sacrificeRookItem];
