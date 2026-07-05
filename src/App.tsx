@@ -20,6 +20,8 @@ function App() {
   pendingPromotion,
   bonusMoveAvailable,
   rookSacrificeBanner,
+  horsebackQueenSquare,
+  knightCheck,
   skipBonusMove,
   onPieceDrop,
   armShop,
@@ -212,6 +214,18 @@ const chessboardOptions = {
       <button onClick={() => choosePromotion('n')} style={{ margin: '4px' }}>Knight</button>
     </div>
   </div>
+)}
+
+{horsebackQueenSquare[turnColor] && gameActive && (
+  <p style={{ textAlign: 'center', fontStyle: 'italic', color: '#555' }}>
+    Your queen on {horsebackQueenSquare[turnColor]} can also move like a knight.
+  </p>
+)}
+
+{knightCheck && !customGameOver && (
+  <p style={{ textAlign: 'center', fontWeight: 'bold', color: 'darkorange' }}>
+    {knightCheck === 'w' ? "White's" : "Black's"} king is in check from a knight-move queen attack!
+  </p>
 )}
 
 {bonusMoveAvailable && (

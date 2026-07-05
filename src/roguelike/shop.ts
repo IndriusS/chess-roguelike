@@ -31,4 +31,21 @@ export const sacrificeRookItem: ShopItem = {
   cost: 3,
 };
 
-export const allShopItems: ShopItem[] = [suicideBishopItem, backwardPawnItem, battleTrainedItem, sacrificeRookItem];
+export const horsebackRidingItem: ShopItem = {
+  id: 'horseback-riding',
+  name: 'Took Horseback Riding Lessons',
+  description:
+    'If your queen captures a knight (enemy or your own), she permanently gains the ability to also move like a knight.',
+  cost: 7,
+};
+
+export const allShopItems: ShopItem[] = [
+  suicideBishopItem,
+  backwardPawnItem,
+  battleTrainedItem,
+  sacrificeRookItem,
+  horsebackRidingItem,
+];
+
+
+

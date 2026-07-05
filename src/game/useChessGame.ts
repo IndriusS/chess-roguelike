@@ -98,37 +98,32 @@ function getSoulValueForCapture(
   return SOUL_VALUES[capturedPiece.type] ?? 0;
 }
 
-
 export function useChessGame(activeMutators: Mutator[]) {
   const [game, setGame] = useState(() => new Chess(buildStartingPosition(activeMutators)));
-
   const [souls, setSouls] = useState<Record<Color, number>>({ w: 0, b: 0 });
-
   const [abilities, setAbilities] = useState<Record<Color, Record<string, number>>>({
     w: {},
     b: {},
   });
   const [shopArmed, setShopArmed] = useState(false);
-
   const [shopOpenFor, setShopOpenFor] = useState<Color | null>(null);
-
   const [customGameOver, setCustomGameOver] = useState<{ winner: Color; reason: string } | null>(
     null
   );
-
   const [explodingSquares, setExplodingSquares] = useState<string[]>([]);
-
   const [pendingPromotion, setPendingPromotion] = useState<{
     from: string;
     to: string;
   } | null>(null);
-
   const [bonusMoveAvailable, setBonusMoveAvailable] = useState<{
     square: string;
     color: Color;
   } | null>(null);
-
   const [rookSacrificeBanner, setRookSacrificeBanner] = useState(false);
+  const [horsebackQueenSquare, setHorsebackQueenSquare] = useState<Record<Color, string | null>>({
+    w: null,
+    b: null,
+  });
 
   const resolveBonusMove = useCallback(
     (targetSquare: string) => {
@@ -196,6 +191,36 @@ export function useChessGame(activeMutators: Mutator[]) {
       const mover = game.turn();
       const gameCopy = new Chess(game.fen());
 
+      // Horseback Riding: sacrifice your own knight to instantly empower your queen
+      const sourcePieceForSac = gameCopy.get(sourceSquare as any);
+      const targetPieceForSac = gameCopy.get(targetSquare as any);
+      if (
+        sourcePieceForSac &&
+        sourcePieceForSac.type === 'q' &&
+        sourcePieceForSac.color === mover &&
+        targetPieceForSac &&
+        targetPieceForSac.type === 'n' &&
+        targetPieceForSac.color === mover &&
+        (abilities[mover]['horseback-riding'] ?? 0) > 0 &&
+        horsebackQueenSquare[mover] !== sourceSquare
+      ) {
+        gameCopy.remove(sourceSquare as any);
+        gameCopy.remove(targetSquare as any);
+        gameCopy.put({ type: 'q', color: mover }, targetSquare as any);
+        setHorsebackQueenSquare((prev) => ({ ...prev, [mover]: targetSquare }));
+
+        const fenParts = gameCopy.fen().split(' ');
+        fenParts[1] = mover === 'w' ? 'b' : 'w';
+        fenParts[3] = '-';
+        setGame(new Chess(fenParts.join(' ')));
+
+        if (shopArmed) {
+          setShopOpenFor(mover);
+          setShopArmed(false);
+        }
+        return true;
+      }
+
       if (isPromotionMove(gameCopy, sourceSquare, targetSquare)) {
         const testMove = new Chess(game.fen());
         try {
@@ -221,6 +246,19 @@ export function useChessGame(activeMutators: Mutator[]) {
               setRookSacrificeBanner(true);
               setTimeout(() => setRookSacrificeBanner(false), 2500);
             }
+            if (targetPieceBefore.type === 'q') {
+              setHorsebackQueenSquare((prev) => ({ ...prev, [lostColor]: null }));
+            }
+          }
+
+          const empoweredByCapture =
+            move.piece === 'q' &&
+            move.captured === 'n' &&
+            (abilities[mover]['horseback-riding'] ?? 0) > 0;
+          const wasTrackedQueenMoving =
+            move.piece === 'q' && horsebackQueenSquare[mover] === move.from;
+          if (empoweredByCapture || wasTrackedQueenMoving) {
+            setHorsebackQueenSquare((prev) => ({ ...prev, [mover]: move.to }));
           }
 
           const isBattleTrainedCapture =
@@ -244,7 +282,7 @@ export function useChessGame(activeMutators: Mutator[]) {
           return true;
         }
       } catch {
-        // fall through to backward-pawn check
+        // fall through to backward-pawn / horseback-move checks
       }
 
       if ((abilities[mover]['backward-pawn'] ?? 0) > 0) {
@@ -259,9 +297,64 @@ export function useChessGame(activeMutators: Mutator[]) {
         }
       }
 
+      // Horseback Riding: empowered queen moving like a knight
+      if (
+        (abilities[mover]['horseback-riding'] ?? 0) > 0 &&
+        horsebackQueenSquare[mover] === sourceSquare &&
+        getKnightTargets(sourceSquare).includes(targetSquare)
+      ) {
+        const piece = gameCopy.get(sourceSquare as any);
+        if (piece && piece.type === 'q' && piece.color === mover) {
+          const capturedPiece = gameCopy.get(targetSquare as any);
+          if (!capturedPiece || capturedPiece.color !== mover) {
+            gameCopy.remove(sourceSquare as any);
+            if (capturedPiece) {
+              gameCopy.remove(targetSquare as any);
+            }
+            gameCopy.put({ type: 'q', color: mover }, targetSquare as any);
+
+            if (capturedPiece) {
+              const soulValue = getSoulValueForCapture(capturedPiece, abilities);
+              setSouls((prev) => ({
+                ...prev,
+                [capturedPiece.color]: prev[capturedPiece.color] + soulValue,
+              }));
+              if (capturedPiece.type === 'r' && soulValue === 13) {
+                setRookSacrificeBanner(true);
+                setTimeout(() => setRookSacrificeBanner(false), 2500);
+              }
+              if (capturedPiece.type === 'q') {
+                setHorsebackQueenSquare((prev) => ({ ...prev, [capturedPiece.color]: null }));
+              }
+            }
+
+            setHorsebackQueenSquare((prev) => ({ ...prev, [mover]: targetSquare }));
+
+            const fenParts = gameCopy.fen().split(' ');
+            fenParts[1] = mover === 'w' ? 'b' : 'w';
+            fenParts[3] = '-';
+            setGame(new Chess(fenParts.join(' ')));
+
+            if (shopArmed) {
+              setShopOpenFor(mover);
+              setShopArmed(false);
+            }
+            return true;
+          }
+        }
+      }
+
       return false;
     },
-    [game, shopArmed, customGameOver, abilities, bonusMoveAvailable, resolveBonusMove]
+    [
+      game,
+      shopArmed,
+      customGameOver,
+      abilities,
+      bonusMoveAvailable,
+      resolveBonusMove,
+      horsebackQueenSquare,
+    ]
   );
 
   const armShop = useCallback(() => {
@@ -286,14 +379,17 @@ export function useChessGame(activeMutators: Mutator[]) {
       }
 
       if (targetPieceBefore) {
-            const lostColor = targetPieceBefore.color as Color;
-            const soulValue = getSoulValueForCapture(targetPieceBefore, abilities);
-            setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
-            if (targetPieceBefore.type === 'r' && soulValue === 13) {
-              setRookSacrificeBanner(true);
-              setTimeout(() => setRookSacrificeBanner(false), 2500);
-            }
-          }
+        const lostColor = targetPieceBefore.color as Color;
+        const soulValue = getSoulValueForCapture(targetPieceBefore, abilities);
+        setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
+        if (targetPieceBefore.type === 'r' && soulValue === 13) {
+          setRookSacrificeBanner(true);
+          setTimeout(() => setRookSacrificeBanner(false), 2500);
+        }
+        if (targetPieceBefore.type === 'q') {
+          setHorsebackQueenSquare((prev) => ({ ...prev, [lostColor]: null }));
+        }
+      }
 
       setGame(gameCopy);
       setPendingPromotion(null);
@@ -303,7 +399,7 @@ export function useChessGame(activeMutators: Mutator[]) {
         setShopArmed(false);
       }
     },
-    [pendingPromotion, game, shopArmed]
+    [pendingPromotion, game, shopArmed, abilities]
   );
 
   const buyItem = useCallback(
@@ -352,6 +448,9 @@ export function useChessGame(activeMutators: Mutator[]) {
           if (targetPiece) {
             if (targetPiece.type === 'k') {
               kingDestroyed = targetPiece.color as Color;
+            }
+            if (targetPiece.type === 'q') {
+              setHorsebackQueenSquare((prev) => ({ ...prev, [targetPiece.color as Color]: null }));
             }
             totalSoulsFromBlast += SOUL_VALUES[targetPiece.type] ?? 0;
             gameCopy.remove(sq as any);
@@ -402,6 +501,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     setShopArmed(false);
     setShopOpenFor(null);
     setCustomGameOver(null);
+    setHorsebackQueenSquare({ w: null, b: null });
   }, [activeMutators]);
 
   return {
@@ -416,6 +516,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     pendingPromotion,
     bonusMoveAvailable,
     rookSacrificeBanner,
+    horsebackQueenSquare,
     skipBonusMove,
     onPieceDrop,
     armShop,
