@@ -155,6 +155,15 @@ export function useChessGame(activeMutators: Mutator[]) {
     w: null,
     b: null,
   });
+  // Golden Throne: once a color's king has moved (including castling) this
+  // flips to true and the ability stops paying out for that color, unless
+  // Golden Throne is (re)purchased - buyItem resets this back to false at
+  // purchase time so the ability always starts fresh, regardless of any
+  // king movement earlier in the game.
+  const [kingHasMoved, setKingHasMoved] = useState<Record<Color, boolean>>({
+    w: false,
+    b: false,
+  });
 
   const knightCheck = useMemo<Color | null>(() => {
     if (isKnightChecked(game, 'w', horsebackQueenSquare)) return 'w';
@@ -194,6 +203,27 @@ export function useChessGame(activeMutators: Mutator[]) {
     }
   }, [knightCheckmate, knightCheck, customGameOver]);
 
+  // Golden Throne: call this once per completed turn, from every path that
+  // ends a turn. Pass kingMoved=true only when this turn's move was the
+  // king itself moving (normal move OR castling - chess.js tags both with
+  // piece: 'k'). Everything else (backward pawn, bishop detonate, knight
+  // bonus move, horseback moves, promotion) never moves the king, so they
+  // always pass false.
+  const applyGoldenThrone = useCallback(
+    (mover: Color, kingMoved: boolean) => {
+      if (kingMoved) {
+        if (!kingHasMoved[mover]) {
+          setKingHasMoved((prev) => ({ ...prev, [mover]: true }));
+        }
+        return;
+      }
+      if (!kingHasMoved[mover] && (abilities[mover]['golden-throne'] ?? 0) > 0) {
+        setSouls((prev) => ({ ...prev, [mover]: prev[mover] + 1 }));
+      }
+    },
+    [abilities, kingHasMoved]
+  );
+
   const resolveBonusMove = useCallback(
     (targetSquare: string) => {
       if (!bonusMoveAvailable) return false;
@@ -219,6 +249,7 @@ export function useChessGame(activeMutators: Mutator[]) {
       const finalParts = gameCopy.fen().split(' ');
       finalParts[1] = opponent;
       finalParts[3] = '-';
+      applyGoldenThrone(color, false);
       setGame(new Chess(finalParts.join(' ')));
       setBonusMoveAvailable(null);
 
@@ -229,7 +260,7 @@ export function useChessGame(activeMutators: Mutator[]) {
 
       return true;
     },
-    [bonusMoveAvailable, game, shopArmed]
+    [bonusMoveAvailable, game, shopArmed, applyGoldenThrone]
   );
 
   const skipBonusMove = useCallback(() => {
@@ -239,6 +270,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     const fenParts = game.fen().split(' ');
     fenParts[1] = opponent;
     fenParts[3] = '-';
+    applyGoldenThrone(color, false);
     setGame(new Chess(fenParts.join(' ')));
     setBonusMoveAvailable(null);
 
@@ -246,7 +278,7 @@ export function useChessGame(activeMutators: Mutator[]) {
       setShopOpenFor(color);
       setShopArmed(false);
     }
-  }, [bonusMoveAvailable, game, shopArmed]);
+  }, [bonusMoveAvailable, game, shopArmed, applyGoldenThrone]);
 
   const onPieceDrop = useCallback(
     ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }) => {
@@ -286,6 +318,7 @@ export function useChessGame(activeMutators: Mutator[]) {
         const fenParts = gameCopy.fen().split(' ');
         fenParts[1] = mover === 'w' ? 'b' : 'w';
         fenParts[3] = '-';
+        applyGoldenThrone(mover, false);
         setGame(new Chess(fenParts.join(' ')));
 
         if (shopArmed) {
@@ -352,6 +385,11 @@ export function useChessGame(activeMutators: Mutator[]) {
             return true;
           }
 
+          // Golden Throne check happens here, once we know the turn is
+          // actually ending (i.e. not paused for a Battle Trained bonus
+          // move). move.piece === 'k' covers both a normal king step and
+          // castling, since chess.js tags castling moves with piece: 'k'.
+          applyGoldenThrone(mover, move.piece === 'k');
           setGame(gameCopy);
           if (shopArmed) {
             setShopOpenFor(mover);
@@ -366,6 +404,7 @@ export function useChessGame(activeMutators: Mutator[]) {
       if ((abilities[mover]['backward-pawn'] ?? 0) > 0 && knightCheck !== mover) {
         const retreated = tryBackwardPawnMove(gameCopy, sourceSquare, targetSquare, mover);
         if (retreated) {
+          applyGoldenThrone(mover, false);
           setGame(gameCopy);
           if (shopArmed) {
             setShopOpenFor(mover);
@@ -415,6 +454,7 @@ export function useChessGame(activeMutators: Mutator[]) {
             const fenParts = gameCopy.fen().split(' ');
             fenParts[1] = mover === 'w' ? 'b' : 'w';
             fenParts[3] = '-';
+            applyGoldenThrone(mover, false);
             setGame(new Chess(fenParts.join(' ')));
 
             if (shopArmed) {
@@ -437,6 +477,7 @@ export function useChessGame(activeMutators: Mutator[]) {
       resolveBonusMove,
       horsebackQueenSquare,
       knightCheck,
+      applyGoldenThrone,
     ]
   );
 
@@ -480,6 +521,8 @@ export function useChessGame(activeMutators: Mutator[]) {
         }
       }
 
+      // A promotion never moves the king, so this is always a "stayed still" turn.
+      applyGoldenThrone(mover, false);
       setGame(gameCopy);
       setPendingPromotion(null);
 
@@ -488,7 +531,7 @@ export function useChessGame(activeMutators: Mutator[]) {
         setShopArmed(false);
       }
     },
-    [pendingPromotion, game, shopArmed, abilities, knightCheck, horsebackQueenSquare]
+    [pendingPromotion, game, shopArmed, abilities, knightCheck, horsebackQueenSquare, applyGoldenThrone]
   );
 
   const buyItem = useCallback(
@@ -502,6 +545,15 @@ export function useChessGame(activeMutators: Mutator[]) {
         ...prev,
         [color]: { ...prev[color], [item.id]: (prev[color][item.id] ?? 0) + 1 },
       }));
+
+      // Golden Throne's "king hasn't moved" tracking starts fresh at the
+      // moment of purchase, regardless of whether that king already moved
+      // earlier in the game (e.g. castled during opening development).
+      // This guarantees the purchase is never immediately dead on arrival.
+      if (item.id === 'golden-throne') {
+        setKingHasMoved((prev) => ({ ...prev, [color]: false }));
+      }
+
       setShopOpenFor(null);
     },
     [shopOpenFor, souls]
@@ -561,13 +613,16 @@ export function useChessGame(activeMutators: Mutator[]) {
           const fenParts = gameCopy.fen().split(' ');
           fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
           fenParts[3] = '-';
+          // Detonating a bishop is never a king move, so this always counts
+          // as the king "staying still" for Golden Throne purposes.
+          applyGoldenThrone(color, false);
           setGame(new Chess(fenParts.join(' ')));
         }
 
         setTimeout(() => setExplodingSquares([]), 300);
       }, 250);
     },
-    [game, abilities]
+    [game, abilities, applyGoldenThrone]
   );
 
   const ownBishopSquares = useMemo(() => {
@@ -591,6 +646,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     setShopOpenFor(null);
     setCustomGameOver(null);
     setHorsebackQueenSquare({ w: null, b: null });
+    setKingHasMoved({ w: false, b: false });
   }, [activeMutators]);
 
   return {
@@ -607,6 +663,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     rookSacrificeBanner,
     horsebackQueenSquare,
     knightCheck,
+    kingHasMoved,
     skipBonusMove,
     onPieceDrop,
     armShop,

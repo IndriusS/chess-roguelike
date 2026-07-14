@@ -22,6 +22,7 @@ function App() {
   rookSacrificeBanner,
   horsebackQueenSquare,
   knightCheck,
+  kingHasMoved,
   skipBonusMove,
   onPieceDrop,
   armShop,
@@ -89,6 +90,20 @@ const chessboardOptions = {
       {(abilities[turnColor]['backward-pawn'] ?? 0) > 0 && gameActive && (
   <p style={{ textAlign: 'center', fontStyle: 'italic', color: '#555' }}>
     Retreating Pawns active — your pawns can step back one square.
+  </p>
+)}
+
+      {(abilities[turnColor]['golden-throne'] ?? 0) > 0 && gameActive && (
+  <p
+    style={{
+      textAlign: 'center',
+      fontStyle: 'italic',
+      color: kingHasMoved[turnColor] ? '#999' : '#b8860b',
+    }}
+  >
+    {kingHasMoved[turnColor]
+      ? 'Golden Throne broken — your king has already moved.'
+      : 'Golden Throne active — +1 soul each turn your king stays still.'}
   </p>
 )}
 
@@ -253,4 +268,3 @@ const chessboardOptions = {
 }
 
 export default App;
-
