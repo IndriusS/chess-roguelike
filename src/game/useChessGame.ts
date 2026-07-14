@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Chess } from 'chess.js';
 import type { Mutator, ShopItem } from '../roguelike/types';
 
@@ -98,6 +98,37 @@ function getSoulValueForCapture(
   return SOUL_VALUES[capturedPiece.type] ?? 0;
 }
 
+function findKingSquare(chessInstance: Chess, color: Color): string | null {
+  const board = chessInstance.board();
+  for (const row of board) {
+    for (const square of row) {
+      if (square && square.type === 'k' && square.color === color) {
+        return square.square;
+      }
+    }
+  }
+  return null;
+}
+
+// Checks whether kingColor's king is currently sitting a knight's-jump away
+// from an opponent queen that has the Horseback Riding ability active.
+// Reads live from the board, so if that queen has been captured this
+// automatically (and correctly) returns false.
+function isKnightChecked(
+  chessInstance: Chess,
+  kingColor: Color,
+  horsebackQueenSquare: Record<Color, string | null>
+): boolean {
+  const opponent: Color = kingColor === 'w' ? 'b' : 'w';
+  const queenSquare = horsebackQueenSquare[opponent];
+  if (!queenSquare) return false;
+  const queenPiece = chessInstance.get(queenSquare as any);
+  if (!queenPiece || queenPiece.type !== 'q' || queenPiece.color !== opponent) return false;
+  const kingSquare = findKingSquare(chessInstance, kingColor);
+  if (!kingSquare) return false;
+  return getKnightTargets(queenSquare).includes(kingSquare);
+}
+
 export function useChessGame(activeMutators: Mutator[]) {
   const [game, setGame] = useState(() => new Chess(buildStartingPosition(activeMutators)));
   const [souls, setSouls] = useState<Record<Color, number>>({ w: 0, b: 0 });
@@ -124,6 +155,44 @@ export function useChessGame(activeMutators: Mutator[]) {
     w: null,
     b: null,
   });
+
+  const knightCheck = useMemo<Color | null>(() => {
+    if (isKnightChecked(game, 'w', horsebackQueenSquare)) return 'w';
+    if (isKnightChecked(game, 'b', horsebackQueenSquare)) return 'b';
+    return null;
+  }, [game, horsebackQueenSquare]);
+
+  const knightCheckmate = useMemo(() => {
+    if (!knightCheck) return false;
+    const mover = knightCheck;
+    if (game.turn() !== mover) return false;
+    const opponent: Color = mover === 'w' ? 'b' : 'w';
+    const queenSquare = horsebackQueenSquare[opponent];
+    if (!queenSquare) return false;
+
+    const legalMoves = game.moves({ verbose: true }) as any[];
+
+    const kingEscapes = legalMoves.some((m) => {
+      if (m.piece !== 'k') return false;
+      const testGame = new Chess(game.fen());
+      testGame.move({ from: m.from, to: m.to, promotion: 'q' });
+      return !isKnightChecked(testGame, mover, horsebackQueenSquare);
+    });
+
+    const canCaptureQueen = legalMoves.some((m) => m.to === queenSquare);
+
+    return !kingEscapes && !canCaptureQueen;
+  }, [game, knightCheck, horsebackQueenSquare]);
+
+  useEffect(() => {
+    if (knightCheckmate && !customGameOver && knightCheck) {
+      const winner: Color = knightCheck === 'w' ? 'b' : 'w';
+      setCustomGameOver({
+        winner,
+        reason: `${knightCheck === 'w' ? "White's" : "Black's"} king was checkmated by a knight-move queen attack! `,
+      });
+    }
+  }, [knightCheckmate, knightCheck, customGameOver]);
 
   const resolveBonusMove = useCallback(
     (targetSquare: string) => {
@@ -207,6 +276,11 @@ export function useChessGame(activeMutators: Mutator[]) {
         gameCopy.remove(sourceSquare as any);
         gameCopy.remove(targetSquare as any);
         gameCopy.put({ type: 'q', color: mover }, targetSquare as any);
+
+        if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+          return false;
+        }
+
         setHorsebackQueenSquare((prev) => ({ ...prev, [mover]: targetSquare }));
 
         const fenParts = gameCopy.fen().split(' ');
@@ -238,6 +312,10 @@ export function useChessGame(activeMutators: Mutator[]) {
       try {
         const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
         if (move !== null) {
+          if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+            return false;
+          }
+
           if (targetPieceBefore) {
             const lostColor = targetPieceBefore.color as Color;
             const soulValue = getSoulValueForCapture(targetPieceBefore, abilities);
@@ -285,7 +363,7 @@ export function useChessGame(activeMutators: Mutator[]) {
         // fall through to backward-pawn / horseback-move checks
       }
 
-      if ((abilities[mover]['backward-pawn'] ?? 0) > 0) {
+      if ((abilities[mover]['backward-pawn'] ?? 0) > 0 && knightCheck !== mover) {
         const retreated = tryBackwardPawnMove(gameCopy, sourceSquare, targetSquare, mover);
         if (retreated) {
           setGame(gameCopy);
@@ -312,6 +390,10 @@ export function useChessGame(activeMutators: Mutator[]) {
               gameCopy.remove(targetSquare as any);
             }
             gameCopy.put({ type: 'q', color: mover }, targetSquare as any);
+
+            if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+              return false;
+            }
 
             if (capturedPiece) {
               const soulValue = getSoulValueForCapture(capturedPiece, abilities);
@@ -354,6 +436,7 @@ export function useChessGame(activeMutators: Mutator[]) {
       bonusMoveAvailable,
       resolveBonusMove,
       horsebackQueenSquare,
+      knightCheck,
     ]
   );
 
@@ -374,6 +457,12 @@ export function useChessGame(activeMutators: Mutator[]) {
         promotion: pieceType,
       });
       if (move === null) {
+        setPendingPromotion(null);
+        return;
+      }
+
+      if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+        // This promotion doesn't resolve an active knight-move check; cancel it.
         setPendingPromotion(null);
         return;
       }
@@ -399,7 +488,7 @@ export function useChessGame(activeMutators: Mutator[]) {
         setShopArmed(false);
       }
     },
-    [pendingPromotion, game, shopArmed, abilities]
+    [pendingPromotion, game, shopArmed, abilities, knightCheck, horsebackQueenSquare]
   );
 
   const buyItem = useCallback(
@@ -517,6 +606,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     bonusMoveAvailable,
     rookSacrificeBanner,
     horsebackQueenSquare,
+    knightCheck,
     skipBonusMove,
     onPieceDrop,
     armShop,
