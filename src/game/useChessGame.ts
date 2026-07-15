@@ -88,14 +88,29 @@ function getKnightTargets(square: string): string[] {
   return squares;
 }
 
-function getSoulValueForCapture(
-  capturedPiece: { type: string; color: Color },
-  abilities: Record<Color, Record<string, number>>
-): number {
-  if (capturedPiece.type === 'r' && (abilities[capturedPiece.color]['sacrifice-rook'] ?? 0) > 0) {
-    return 13;
-  }
+function getSoulValueForCapture(capturedPiece: { type: string; color: Color }): number {
   return SOUL_VALUES[capturedPiece.type] ?? 0;
+}
+
+type SweepDirection = 'up' | 'down' | 'left' | 'right';
+
+// All squares from rookSquare to the edge of the board in one direction,
+// NOT including rookSquare itself. Used by Juggernaut.
+function getSweepSquares(rookSquare: string, direction: SweepDirection): string[] {
+  const file = rookSquare.charCodeAt(0) - 97;
+  const rank = parseInt(rookSquare[1], 10) - 1;
+  const df = direction === 'left' ? -1 : direction === 'right' ? 1 : 0;
+  const dr = direction === 'down' ? -1 : direction === 'up' ? 1 : 0;
+
+  const squares: string[] = [];
+  let f = file + df;
+  let r = rank + dr;
+  while (f >= 0 && f <= 7 && r >= 0 && r <= 7) {
+    squares.push(String.fromCharCode(97 + f) + (r + 1));
+    f += df;
+    r += dr;
+  }
+  return squares;
 }
 
 function findKingSquare(chessInstance: Chess, color: Color): string | null {
@@ -142,6 +157,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     null
   );
   const [explodingSquares, setExplodingSquares] = useState<string[]>([]);
+  const [juggernautSweepSquares, setJuggernautSweepSquares] = useState<string[]>([]);
   const [pendingPromotion, setPendingPromotion] = useState<{
     from: string;
     to: string;
@@ -351,12 +367,8 @@ export function useChessGame(activeMutators: Mutator[]) {
 
           if (targetPieceBefore) {
             const lostColor = targetPieceBefore.color as Color;
-            const soulValue = getSoulValueForCapture(targetPieceBefore, abilities);
+            const soulValue = getSoulValueForCapture(targetPieceBefore);
             setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
-            if (targetPieceBefore.type === 'r' && soulValue === 13) {
-              setRookSacrificeBanner(true);
-              setTimeout(() => setRookSacrificeBanner(false), 2500);
-            }
             if (targetPieceBefore.type === 'q') {
               setHorsebackQueenSquare((prev) => ({ ...prev, [lostColor]: null }));
             }
@@ -435,15 +447,11 @@ export function useChessGame(activeMutators: Mutator[]) {
             }
 
             if (capturedPiece) {
-              const soulValue = getSoulValueForCapture(capturedPiece, abilities);
+              const soulValue = getSoulValueForCapture(capturedPiece);
               setSouls((prev) => ({
                 ...prev,
                 [capturedPiece.color]: prev[capturedPiece.color] + soulValue,
               }));
-              if (capturedPiece.type === 'r' && soulValue === 13) {
-                setRookSacrificeBanner(true);
-                setTimeout(() => setRookSacrificeBanner(false), 2500);
-              }
               if (capturedPiece.type === 'q') {
                 setHorsebackQueenSquare((prev) => ({ ...prev, [capturedPiece.color]: null }));
               }
@@ -510,12 +518,8 @@ export function useChessGame(activeMutators: Mutator[]) {
 
       if (targetPieceBefore) {
         const lostColor = targetPieceBefore.color as Color;
-        const soulValue = getSoulValueForCapture(targetPieceBefore, abilities);
+        const soulValue = getSoulValueForCapture(targetPieceBefore);
         setSouls((prev) => ({ ...prev, [lostColor]: prev[lostColor] + soulValue }));
-        if (targetPieceBefore.type === 'r' && soulValue === 13) {
-          setRookSacrificeBanner(true);
-          setTimeout(() => setRookSacrificeBanner(false), 2500);
-        }
         if (targetPieceBefore.type === 'q') {
           setHorsebackQueenSquare((prev) => ({ ...prev, [lostColor]: null }));
         }
@@ -625,12 +629,86 @@ export function useChessGame(activeMutators: Mutator[]) {
     [game, abilities, applyGoldenThrone]
   );
 
+  // Juggernaut ("SACRIFICES... THE ROOOOOOK!!!"): a rook charges in a
+  // straight line to the edge of the board, destroying everything (friend
+  // or foe) in its path, then self-destructs at the end. Kings are immune
+  // - the charge passes over them without harm, but keeps going and still
+  // destroys anything behind them. All souls (including the rook's own
+  // value) go to the opponent of whoever activated it, same convention as
+  // Suicide Bishop: the cost is inherent to the ability.
+  const activateJuggernaut = useCallback(
+    (rookSquare: string, direction: SweepDirection) => {
+      const color = game.turn();
+      if ((abilities[color]['juggernaut'] ?? 0) <= 0) return;
+
+      const opponent: Color = color === 'w' ? 'b' : 'w';
+      const sweepSquares = getSweepSquares(rookSquare, direction);
+
+      setJuggernautSweepSquares(sweepSquares);
+
+      setTimeout(() => {
+        const gameCopy = new Chess(game.fen());
+        const rookPiece = gameCopy.get(rookSquare as any);
+        if (!rookPiece || rookPiece.type !== 'r' || rookPiece.color !== color) {
+          setJuggernautSweepSquares([]);
+          return;
+        }
+
+        let totalSouls = 0;
+
+        for (const sq of sweepSquares) {
+          const targetPiece = gameCopy.get(sq as any);
+          if (!targetPiece) continue;
+          if (targetPiece.type === 'k') continue; // kings are immune - too OP otherwise
+          if (targetPiece.type === 'q') {
+            setHorsebackQueenSquare((prev) => ({ ...prev, [targetPiece.color as Color]: null }));
+          }
+          totalSouls += SOUL_VALUES[targetPiece.type] ?? 0;
+          gameCopy.remove(sq as any);
+        }
+
+        // The rook itself dies at the end of its own charge.
+        totalSouls += SOUL_VALUES['r'];
+        gameCopy.remove(rookSquare as any);
+
+        if (totalSouls > 0) {
+          setSouls((prev) => ({ ...prev, [opponent]: prev[opponent] + totalSouls }));
+        }
+
+        setRookSacrificeBanner(true);
+        setTimeout(() => setRookSacrificeBanner(false), 2500);
+
+        const fenParts = gameCopy.fen().split(' ');
+        fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+        fenParts[3] = '-';
+        applyGoldenThrone(color, false);
+        setGame(new Chess(fenParts.join(' ')));
+
+        setTimeout(() => setJuggernautSweepSquares([]), 300);
+      }, 250);
+    },
+    [game, abilities, applyGoldenThrone]
+  );
+
   const ownBishopSquares = useMemo(() => {
     const squares: string[] = [];
     const board = game.board();
     for (const row of board) {
       for (const square of row) {
         if (square && square.type === 'b' && square.color === game.turn()) {
+          squares.push(square.square);
+        }
+      }
+    }
+    return squares;
+  }, [game]);
+
+  const ownRookSquares = useMemo(() => {
+    const squares: string[] = [];
+    const board = game.board();
+    for (const row of board) {
+      for (const square of row) {
+        if (square && square.type === 'r' && square.color === game.turn()) {
           squares.push(square.square);
         }
       }
@@ -647,6 +725,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     setCustomGameOver(null);
     setHorsebackQueenSquare({ w: null, b: null });
     setKingHasMoved({ w: false, b: false });
+    setJuggernautSweepSquares([]);
   }, [activeMutators]);
 
   return {
@@ -657,7 +736,9 @@ export function useChessGame(activeMutators: Mutator[]) {
     shopOpenFor,
     customGameOver,
     ownBishopSquares,
+    ownRookSquares,
     explodingSquares,
+    juggernautSweepSquares,
     pendingPromotion,
     bonusMoveAvailable,
     rookSacrificeBanner,
@@ -670,6 +751,7 @@ export function useChessGame(activeMutators: Mutator[]) {
     buyItem,
     closeShop,
     detonateBishop,
+    activateJuggernaut,
     choosePromotion,
     resetGame,
   };

@@ -8,13 +8,6 @@ export const backwardPawnItem: ShopItem = {
   cost:1,
 };
 
-export const sacrificeRookItem: ShopItem = {
-  id: 'sacrifice-rook',
-  name: 'SACRIFICES... THE ROOOOOOK!',
-  description: 'When one of your rooks is captured, you gain 13 souls instead of the normal amount.',
-  cost: 2,
-};
-
 export const goldenThrone: ShopItem = {
   id: 'golden-throne',
   name: 'Golden Throne',
@@ -47,14 +40,22 @@ export const suicideBishopItem: ShopItem = {
   cost: 7,
 };
 
+export const juggernautRookItem: ShopItem = {
+  id: 'juggernaut',
+  name: 'SACRIFICES... THE ROOOOOOK! aka Juggernaut-Rook',
+  description: 'Rook destroys everything in its way and sacrifices itself. Kings ignore it.',
+  cost: 7,
+};
+
+
 
 export const allShopItems: ShopItem[] = [
   backwardPawnItem,
   goldenThrone,
-  sacrificeRookItem,
   battleTrainedItem,
   horsebackRidingItem,
-  suicideBishopItem
+  suicideBishopItem,
+  juggernautRookItem
   ];
 
 

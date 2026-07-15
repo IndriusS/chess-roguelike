@@ -16,7 +16,9 @@ function App() {
   shopOpenFor,
   customGameOver,
   ownBishopSquares,
+  ownRookSquares,           // ADD
   explodingSquares,
+  juggernautSweepSquares,   // ADD
   pendingPromotion,
   bonusMoveAvailable,
   rookSacrificeBanner,
@@ -29,6 +31,7 @@ function App() {
   buyItem,
   closeShop,
   detonateBishop,
+  activateJuggernaut,       // ADD
   choosePromotion,
   resetGame,
 } = useChessGame(activeMutators);
@@ -36,13 +39,23 @@ function App() {
   const cheapestItemCost = Math.min(...allShopItems.map((item) => item.cost));
   const gameActive = !customGameOver && !game.isGameOver();
   const canArmShop = souls[turnColor] >= cheapestItemCost && !shopOpenFor && gameActive;
-  const suicideBishopCharges = abilities[turnColor]['suicide-bishop'] ?? 0;
 
-const explosionStyle: Record<string, React.CSSProperties> = Object.fromEntries(
+  const suicideBishopCharges = abilities[turnColor]['suicide-bishop'] ?? 0;
+  const explosionStyle: Record<string, React.CSSProperties> = Object.fromEntries(
   explodingSquares.map((square) => [
     square,
     {
-      backgroundColor: 'rgba(255, 87, 34, 0.75)',
+      backgroundColor: 'rgba(18, 4, 218, 0.75)',
+      transition: 'background-color 0.15s ease-out',
+    },
+  ])
+)
+  const juggernautCharges = abilities[turnColor]['juggernaut'] ?? 0;
+  const juggernautStyle: Record<string, React.CSSProperties> = Object.fromEntries(
+  juggernautSweepSquares.map((square) => [
+    square,
+    {
+      backgroundColor: 'rgba(235, 89, 5, 0.87)',
       transition: 'background-color 0.15s ease-out',
     },
   ])
@@ -51,8 +64,10 @@ const explosionStyle: Record<string, React.CSSProperties> = Object.fromEntries(
 const chessboardOptions = {
   position: game.fen(),
   onPieceDrop,
-  squareStyles: explosionStyle,
+  squareStyles: { ...explosionStyle, ...juggernautStyle },
 };
+;
+
 
 
   return (
@@ -155,6 +170,30 @@ const chessboardOptions = {
       ))}
       {ownBishopSquares.length === 0 && <p>No bishops on the board to detonate.</p>}
     </div>
+  </div>
+)}
+
+{gameActive && juggernautCharges > 0 && (
+  <div
+    style={{
+      textAlign: 'center',
+      marginTop: '10px',
+      border: '1px solid #999',
+      borderRadius: '6px',
+      padding: '8px',
+    }}
+  >
+    <strong>Juggernaut active</strong>
+    {ownRookSquares.length === 0 && <p>No rooks on the board to charge.</p>}
+    {ownRookSquares.map((square) => (
+      <div key={square} style={{ margin: '6px 0' }}>
+        <span style={{ marginRight: '8px' }}>{square}:</span>
+        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'up')}>Up</button>
+        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'down')}>Down</button>
+        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'left')}>Left</button>
+        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'right')}>Right</button>
+      </div>
+    ))}
   </div>
 )}
 
