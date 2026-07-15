@@ -16,20 +16,20 @@ export const goldenThrone: ShopItem = {
   cost: 2,
  };
 
+ export const horsebackRidingItem: ShopItem = {
+  id: 'horseback-riding',
+  name: 'Took Horseback Riding Lessons',
+  description:
+    'If your queen captures a knight (enemy or your own), she permanently gains the ability to also move like a knight.',
+  cost: 4,
+};
+
 export const battleTrainedItem: ShopItem = {
   id: 'battle-trained',
   name: 'Battle Trained Horse',
   description:
     'Permanently allows your knights to make an immediate bonus move after capturing a piece. The bonus move cannot capture or give check.',
-  cost: 6,
-};
-
-export const horsebackRidingItem: ShopItem = {
-  id: 'horseback-riding',
-  name: 'Took Horseback Riding Lessons',
-  description:
-    'If your queen captures a knight (enemy or your own), she permanently gains the ability to also move like a knight.',
-  cost: 6,
+  cost: 4,
 };
 
 export const suicideBishopItem: ShopItem = {
@@ -37,14 +37,14 @@ export const suicideBishopItem: ShopItem = {
   name: 'Suicide Bishops',
   description:
     'Permanently allows your bishops to detonate instead of moving, destroying every piece (yours or theirs) in the 3x3 area around it.',
-  cost: 7,
+  cost: 5,
 };
 
 export const juggernautRookItem: ShopItem = {
   id: 'juggernaut',
   name: 'SACRIFICES... THE ROOOOOOK! aka Juggernaut-Rook',
   description: 'Rook destroys everything in its way and sacrifices itself. Kings ignore it.',
-  cost: 7,
+  cost: 6,
 };
 
 
@@ -52,8 +52,8 @@ export const juggernautRookItem: ShopItem = {
 export const allShopItems: ShopItem[] = [
   backwardPawnItem,
   goldenThrone,
+  horsebackRidingItem,  
   battleTrainedItem,
-  horsebackRidingItem,
   suicideBishopItem,
   juggernautRookItem
   ];
