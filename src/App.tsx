@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { useChessGame } from './game/useChessGame';
+import { useMultiplayer, type GameAction } from './game/useMultiplayer';
 import { allMutators } from './roguelike/mutators';
 import { allShopItems } from './roguelike/shop';
 console.log('Shop items:', allShopItems);
@@ -35,10 +36,116 @@ function App() {
   choosePromotion,
   resetGame,
 } = useChessGame(activeMutators);
+  const multiplayer = useMultiplayer();
   const turnColor = game.turn();
+
+  // Applies an action that arrived from the peer by calling the exact same
+  // local function the acting player used. Both browsers run identical,
+  // deterministic game logic, so replaying the same inputs lands on
+  // identical state - this mirrors how hotseat mode already works, just
+  // with the "other player" arriving over the network instead of sharing
+  // a screen.
+  useEffect(() => {
+    if (!multiplayer.lastReceivedAction) return;
+    const action = multiplayer.lastReceivedAction.action;
+    switch (action.type) {
+      case 'onPieceDrop':
+        onPieceDrop({ sourceSquare: action.sourceSquare, targetSquare: action.targetSquare });
+        break;
+      case 'detonateBishop':
+        detonateBishop(action.square);
+        break;
+      case 'activateJuggernaut':
+        activateJuggernaut(action.rookSquare, action.direction);
+        break;
+      case 'choosePromotion':
+        choosePromotion(action.pieceType);
+        break;
+      case 'skipBonusMove':
+        skipBonusMove();
+        break;
+      case 'buyItem': {
+        const item = allShopItems.find((i) => i.id === action.itemId);
+        if (item) buyItem(item, action.buyerColor);
+        break;
+      }
+      case 'resetGame':
+        resetGame();
+        break;
+    }
+    // Intentionally only re-runs when a new action actually arrives (keyed
+    // by seq), not on every render or every game-logic function identity
+    // change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiplayer.lastReceivedAction]);
+
+  const sendIfMultiplayer = (action: GameAction) => {
+    if (multiplayer.isMultiplayer) multiplayer.sendAction(action);
+  };
+
+  // Wrapped versions of every state-mutating action: each checks turn
+  // ownership first (in multiplayer only - hotseat mode is unaffected),
+  // then performs the action locally exactly as before, then broadcasts it
+  // to the peer so their board updates too.
+  const handlePieceDrop = ({
+    sourceSquare,
+    targetSquare,
+  }: {
+    sourceSquare: string;
+    targetSquare: string | null;
+  }) => {
+    if (!targetSquare) return false;
+    if (!multiplayer.isMyTurn(turnColor)) return false;
+    const result = onPieceDrop({ sourceSquare, targetSquare });
+    if (result) sendIfMultiplayer({ type: 'onPieceDrop', sourceSquare, targetSquare });
+    return result;
+  };
+
+  const handleDetonateBishop = (square: string) => {
+    if (!multiplayer.isMyTurn(turnColor)) return;
+    detonateBishop(square);
+    sendIfMultiplayer({ type: 'detonateBishop', square });
+  };
+
+  const handleActivateJuggernaut = (
+    rookSquare: string,
+    direction: 'up' | 'down' | 'left' | 'right'
+  ) => {
+    if (!multiplayer.isMyTurn(turnColor)) return;
+    activateJuggernaut(rookSquare, direction);
+    sendIfMultiplayer({ type: 'activateJuggernaut', rookSquare, direction });
+  };
+
+  const handleChoosePromotion = (pieceType: 'q' | 'r' | 'b' | 'n') => {
+    if (!multiplayer.isMyTurn(turnColor)) return;
+    choosePromotion(pieceType);
+    sendIfMultiplayer({ type: 'choosePromotion', pieceType });
+  };
+
+  const handleSkipBonusMove = () => {
+    if (!multiplayer.isMyTurn(turnColor)) return;
+    skipBonusMove();
+    sendIfMultiplayer({ type: 'skipBonusMove' });
+  };
+
+  const handleBuyItem = (item: (typeof allShopItems)[number]) => {
+    buyItem(item);
+    if (multiplayer.myColor) {
+      sendIfMultiplayer({ type: 'buyItem', itemId: item.id, buyerColor: multiplayer.myColor });
+    }
+  };
+
+  const handleResetGame = () => {
+    resetGame();
+    sendIfMultiplayer({ type: 'resetGame' });
+  };
   const cheapestItemCost = Math.min(...allShopItems.map((item) => item.cost));
   const gameActive = !customGameOver && !game.isGameOver();
-  const canArmShop = souls[turnColor] >= cheapestItemCost && !shopOpenFor && gameActive;
+  const canArmShop =
+    souls[turnColor] >= cheapestItemCost &&
+    !shopOpenFor &&
+    gameActive &&
+    multiplayer.isMyTurn(turnColor);
 
   const suicideBishopCharges = abilities[turnColor]['suicide-bishop'] ?? 0;
   const explosionStyle: Record<string, React.CSSProperties> = Object.fromEntries(
@@ -63,15 +170,70 @@ function App() {
 
 const chessboardOptions = {
   position: game.fen(),
-  onPieceDrop,
+  onPieceDrop: handlePieceDrop,
   squareStyles: { ...explosionStyle, ...juggernautStyle },
 };
 ;
 
 
 
+  // Pre-game screen: shown until either the player picks local hotseat
+  // (default, status stays 'idle') or a multiplayer connection is fully
+  // established. Joining as guest happens automatically (via the ?room=
+  // link) inside useMultiplayer, so 'connecting' here only ever applies
+  // to the guest.
+  if (multiplayer.status !== 'idle' && multiplayer.status !== 'connected') {
+    return (
+      <div style={{ width: '420px', margin: '80px auto', textAlign: 'center' }}>
+        <h1>Chess Roguelike</h1>
+        {multiplayer.status === 'waiting-for-peer' && (
+          <>
+            <p>Send this link to your friend:</p>
+            <input
+              readOnly
+              value={multiplayer.roomLink ?? 'Generating link...'}
+              style={{ width: '100%', padding: '8px', marginBottom: '10px' }}
+              onFocus={(e) => e.target.select()}
+            />
+            {multiplayer.roomLink && (
+              <button onClick={() => navigator.clipboard.writeText(multiplayer.roomLink!)}>
+                Copy link
+              </button>
+            )}
+            <p style={{ color: '#555', fontStyle: 'italic' }}>
+              Waiting for your friend to open it... (you'll be White)
+            </p>
+          </>
+        )}
+        {multiplayer.status === 'connecting' && <p>Connecting to your friend's game...</p>}
+        {multiplayer.status === 'peer-disconnected' && (
+          <p style={{ color: 'crimson' }}>Your friend disconnected. Reload to start a new game.</p>
+        )}
+        {multiplayer.status === 'error' && (
+          <>
+            <p style={{ color: 'crimson' }}>{multiplayer.errorMessage}</p>
+            <button onClick={() => window.location.reload()}>Reload</button>
+          </>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{ width: '520px', margin: '40px auto' }}>
+
+{multiplayer.status === 'idle' && (
+  <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+    <button onClick={multiplayer.createGame}>Play Online (create link for a friend)</button>
+  </div>
+)}
+
+{multiplayer.isMultiplayer && (
+  <p style={{ textAlign: 'center', fontWeight: 'bold' }}>
+    You are {multiplayer.myColor === 'w' ? 'White' : 'Black'} —{' '}
+    {turnColor === multiplayer.myColor ? "it's your turn" : "waiting for your friend's move"}
+  </p>
+)}
 
 {rookSacrificeBanner && (
   <div
@@ -147,7 +309,7 @@ const chessboardOptions = {
         </div>
       )}
 
-      {gameActive && suicideBishopCharges > 0 && (
+      {gameActive && suicideBishopCharges > 0 && multiplayer.isMyTurn(turnColor) && (
   <div
     style={{
       textAlign: 'center',
@@ -163,7 +325,7 @@ const chessboardOptions = {
         <button
           key={square}
           style={{ margin: '4px' }}
-          onClick={() => detonateBishop(square)}
+          onClick={() => handleDetonateBishop(square)}
         >
           Detonate bishop on {square}
         </button>
@@ -173,7 +335,7 @@ const chessboardOptions = {
   </div>
 )}
 
-{gameActive && juggernautCharges > 0 && (
+{gameActive && juggernautCharges > 0 && multiplayer.isMyTurn(turnColor) && (
   <div
     style={{
       textAlign: 'center',
@@ -188,17 +350,17 @@ const chessboardOptions = {
     {ownRookSquares.map((square) => (
       <div key={square} style={{ margin: '6px 0' }}>
         <span style={{ marginRight: '8px' }}>{square}:</span>
-        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'up')}>Up</button>
-        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'down')}>Down</button>
-        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'left')}>Left</button>
-        <button style={{ margin: '2px' }} onClick={() => activateJuggernaut(square, 'right')}>Right</button>
+        <button style={{ margin: '2px' }} onClick={() => handleActivateJuggernaut(square, 'up')}>Up</button>
+        <button style={{ margin: '2px' }} onClick={() => handleActivateJuggernaut(square, 'down')}>Down</button>
+        <button style={{ margin: '2px' }} onClick={() => handleActivateJuggernaut(square, 'left')}>Left</button>
+        <button style={{ margin: '2px' }} onClick={() => handleActivateJuggernaut(square, 'right')}>Right</button>
       </div>
     ))}
   </div>
 )}
 
       <div style={{ textAlign: 'center', marginTop: '10px' }}>
-        <button onClick={resetGame}>Reset Board</button>
+        <button onClick={handleResetGame}>Reset Board</button>
       </div>
 
       {shopOpenFor && (
@@ -234,7 +396,7 @@ const chessboardOptions = {
                 {alreadyOwned ? (
                 <p style={{ fontStyle: 'italic', color: '#888' }}>Already owned</p>
                    ) : (
-                  <button disabled={souls[shopOpenFor] < item.cost} onClick={() => buyItem(item)}>
+                  <button disabled={souls[shopOpenFor] < item.cost} onClick={() => handleBuyItem(item)}>
                    Buy
                   </button>
                     )}
@@ -262,10 +424,16 @@ const chessboardOptions = {
   >
     <div style={{ background: 'white', padding: '20px', borderRadius: '8px' }}>
       <h2>Promote pawn to:</h2>
-      <button onClick={() => choosePromotion('q')} style={{ margin: '4px' }}>Queen</button>
-      <button onClick={() => choosePromotion('r')} style={{ margin: '4px' }}>Rook</button>
-      <button onClick={() => choosePromotion('b')} style={{ margin: '4px' }}>Bishop</button>
-      <button onClick={() => choosePromotion('n')} style={{ margin: '4px' }}>Knight</button>
+      {multiplayer.isMyTurn(turnColor) ? (
+        <>
+          <button onClick={() => handleChoosePromotion('q')} style={{ margin: '4px' }}>Queen</button>
+          <button onClick={() => handleChoosePromotion('r')} style={{ margin: '4px' }}>Rook</button>
+          <button onClick={() => handleChoosePromotion('b')} style={{ margin: '4px' }}>Bishop</button>
+          <button onClick={() => handleChoosePromotion('n')} style={{ margin: '4px' }}>Knight</button>
+        </>
+      ) : (
+        <p>Waiting for your friend to choose...</p>
+      )}
     </div>
   </div>
 )}
@@ -293,11 +461,15 @@ const chessboardOptions = {
     }}
   >
     <strong>Bonus move! Move your knight on {bonusMoveAvailable.square}, or skip it.</strong>
-    <div>
-      <button onClick={skipBonusMove} style={{ margin: '4px' }}>
-        Skip Bonus Move
-      </button>
-    </div>
+    {multiplayer.isMyTurn(turnColor) ? (
+      <div>
+        <button onClick={handleSkipBonusMove} style={{ margin: '4px' }}>
+          Skip Bonus Move
+        </button>
+      </div>
+    ) : (
+      <p>Waiting for your friend...</p>
+    )}
   </div>
 )}
 

@@ -13,7 +13,7 @@ const SOUL_VALUES: Record<string, number> = {
   k: 0,
 };
 
-type Color = 'w' | 'b';
+export type Color = 'w' | 'b';
 
 function buildStartingPosition(activeMutators: Mutator[]): string {
   return activeMutators.reduce(
@@ -558,9 +558,15 @@ export function useChessGame(activeMutators: Mutator[]) {
   );
 
   const buyItem = useCallback(
-    (item: ShopItem) => {
-      if (!shopOpenFor) return;
-      const color = shopOpenFor;
+    // forColor is only used when replaying a purchase that arrived from a
+    // multiplayer peer: on the receiving browser, shopOpenFor is null
+    // (that player never armed/opened their own shop), so the remote sync
+    // layer passes the known buyer color explicitly instead. Local,
+    // same-machine purchases keep using shopOpenFor as before by omitting
+    // the second argument.
+    (item: ShopItem, forColor?: Color) => {
+      const color = forColor ?? shopOpenFor;
+      if (!color) return;
       if (souls[color] < item.cost) return;
 
       setSouls((prev) => ({ ...prev, [color]: prev[color] - item.cost }));
@@ -577,7 +583,12 @@ export function useChessGame(activeMutators: Mutator[]) {
         setKingHasMoved((prev) => ({ ...prev, [color]: false }));
       }
 
-      setShopOpenFor(null);
+      // Only clear the local shopOpenFor UI state when this was a genuine
+      // local purchase - a remote replay shouldn't touch it, since it was
+      // never set to begin with on this browser.
+      if (!forColor) {
+        setShopOpenFor(null);
+      }
     },
     [shopOpenFor, souls]
   );
