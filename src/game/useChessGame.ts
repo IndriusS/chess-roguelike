@@ -129,6 +129,14 @@ function findKingSquare(chessInstance: Chess, color: Color): string | null {
 // from an opponent queen that has the Horseback Riding ability active.
 // Reads live from the board, so if that queen has been captured this
 // automatically (and correctly) returns false.
+//
+// NOTE: this depends only on kingColor's king square and the opponent's
+// empowered-queen square. It does NOT depend on whose turn it is, or on
+// whether the king was already in check before a given move. That means
+// it's always safe to call this after any candidate move to validate the
+// resulting position - there's no need to gate it on "was already in
+// knight-check", since if the king didn't move the result can't have
+// changed anyway.
 function isKnightChecked(
   chessInstance: Chess,
   kingColor: Color,
@@ -325,7 +333,10 @@ export function useChessGame(activeMutators: Mutator[]) {
         gameCopy.remove(targetSquare as any);
         gameCopy.put({ type: 'q', color: mover }, targetSquare as any);
 
-        if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+        // Validate the resulting position never leaves mover's own king in
+        // knight-check - this doesn't move the king, but is kept for
+        // consistency/safety with the other paths below.
+        if (isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
           return false;
         }
 
@@ -361,7 +372,13 @@ export function useChessGame(activeMutators: Mutator[]) {
       try {
         const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
         if (move !== null) {
-          if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+          // Validate the resulting position doesn't leave (or put) mover's
+          // king in knight-check. This is checked unconditionally on every
+          // move, not just when the king was already in knight-check
+          // beforehand - a king that wasn't in check can still walk itself
+          // onto a square the empowered enemy queen attacks, and that must
+          // be rejected the same as any other move into check.
+          if (isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
             return false;
           }
 
@@ -442,7 +459,7 @@ export function useChessGame(activeMutators: Mutator[]) {
             }
             gameCopy.put({ type: 'q', color: mover }, targetSquare as any);
 
-            if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+            if (isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
               return false;
             }
 
@@ -510,8 +527,10 @@ export function useChessGame(activeMutators: Mutator[]) {
         return;
       }
 
-      if (knightCheck === mover && isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
-        // This promotion doesn't resolve an active knight-move check; cancel it.
+      if (isKnightChecked(gameCopy, mover, horsebackQueenSquare)) {
+        // This promotion doesn't resolve an active knight-move check, or
+        // (though not really reachable for a pawn move) would otherwise
+        // leave the king in knight-check; cancel it.
         setPendingPromotion(null);
         return;
       }
