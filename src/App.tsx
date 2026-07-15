@@ -172,6 +172,12 @@ const chessboardOptions = {
   position: game.fen(),
   onPieceDrop: handlePieceDrop,
   squareStyles: { ...explosionStyle, ...juggernautStyle },
+  // Local hotseat always shows White at the bottom (both players share the
+  // screen, so there's no single "my side"). In multiplayer, each browser
+  // shows its own player's color at the bottom.
+  boardOrientation: (multiplayer.isMultiplayer && multiplayer.myColor === 'b'
+    ? 'black'
+    : 'white') as 'white' | 'black',
 };
 ;
 
@@ -201,7 +207,7 @@ const chessboardOptions = {
               </button>
             )}
             <p style={{ color: '#555', fontStyle: 'italic' }}>
-              Waiting for your friend to open it... (you'll be White)
+              Waiting for your friend to open it... (you're {multiplayer.myColor === 'w' ? 'White' : 'Black'})
             </p>
           </>
         )}
@@ -224,7 +230,11 @@ const chessboardOptions = {
 
 {multiplayer.status === 'idle' && (
   <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-    <button onClick={multiplayer.createGame}>Play Online (create link for a friend)</button>
+    <p style={{ fontWeight: 'bold', marginBottom: '4px' }}>Play Online (create link for a friend)</p>
+    <button onClick={() => multiplayer.createGame('w')} style={{ marginRight: '6px' }}>
+      Play as White
+    </button>
+    <button onClick={() => multiplayer.createGame('b')}>Play as Black</button>
   </div>
 )}
 

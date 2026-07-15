@@ -24,6 +24,13 @@ export type ConnectionStatus =
   | 'peer-disconnected'
   | 'error';
 
+// Internal wire format. 'assignColor' is a one-time handshake message sent
+// by the host right after connecting, telling the guest which color they
+// got (the opposite of whatever the host chose). 'action' wraps every
+// normal GameAction. Keeping these distinct means App.tsx's action-replay
+// logic never has to know about the handshake at all.
+type WireMessage = { kind: 'assignColor'; color: Color } | { kind: 'action'; action: GameAction };
+
 const ROOM_PARAM = 'room';
 
 export function useMultiplayer() {
@@ -42,49 +49,72 @@ export function useMultiplayer() {
   const connRef = useRef<DataConnection | null>(null);
   const seqRef = useRef(0);
 
-  const wireConnection = useCallback((conn: DataConnection) => {
+  // isHost + hostColor are only meaningful for the host's own outgoing
+  // connection: right when the guest connects, the host immediately tells
+  // them which color they got (whichever one the host didn't pick).
+  const wireConnection = useCallback((conn: DataConnection, isHost: boolean, hostColor?: Color) => {
     connRef.current = conn;
-    conn.on('open', () => setStatus('connected'));
+    conn.on('open', () => {
+      if (isHost && hostColor) {
+        const guestColor: Color = hostColor === 'w' ? 'b' : 'w';
+        conn.send({ kind: 'assignColor', color: guestColor } satisfies WireMessage);
+        setStatus('connected');
+      }
+      // Guest doesn't flip to 'connected' here - it waits for the
+      // 'assignColor' message below, so myColor and status become correct
+      // at the same moment (never a flash of "connected" with no color).
+    });
     conn.on('data', (data) => {
+      const msg = data as WireMessage;
+      if (msg.kind === 'assignColor') {
+        setMyColor(msg.color);
+        setStatus('connected');
+        return;
+      }
       seqRef.current += 1;
-      setLastReceivedAction({ seq: seqRef.current, action: data as GameAction });
+      setLastReceivedAction({ seq: seqRef.current, action: msg.action });
     });
     conn.on('close', () => setStatus('peer-disconnected'));
     conn.on('error', () => setStatus('error'));
   }, []);
 
-  // Host flow: create a peer, become White, wait for the guest to connect.
-  const createGame = useCallback(() => {
-    setStatus('waiting-for-peer');
-    setMyColor('w');
-    setErrorMessage(null);
+  // Host flow: create a peer, pick your color, wait for the guest to
+  // connect. Whichever color the host doesn't pick becomes the guest's.
+  const createGame = useCallback(
+    (chosenColor: Color) => {
+      setStatus('waiting-for-peer');
+      setMyColor(chosenColor);
+      setErrorMessage(null);
 
-    const peer = new Peer();
-    peerRef.current = peer;
+      const peer = new Peer();
+      peerRef.current = peer;
 
-    peer.on('open', (id) => {
-      const url = new URL(window.location.href);
-      url.searchParams.set(ROOM_PARAM, id);
-      setRoomLink(url.toString());
-    });
+      peer.on('open', (id) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set(ROOM_PARAM, id);
+        setRoomLink(url.toString());
+      });
 
-    peer.on('connection', (conn) => {
-      wireConnection(conn);
-    });
+      peer.on('connection', (conn) => {
+        wireConnection(conn, true, chosenColor);
+      });
 
-    peer.on('error', (err) => {
-      console.error('Peer error (host):', err);
-      setErrorMessage('Connection error - try creating a new game.');
-      setStatus('error');
-    });
-  }, [wireConnection]);
+      peer.on('error', (err) => {
+        console.error('Peer error (host):', err);
+        setErrorMessage('Connection error - try creating a new game.');
+        setStatus('error');
+      });
+    },
+    [wireConnection]
+  );
 
   // Guest flow: create your own peer, then connect directly to the host's
-  // peer id (the room code from the link).
+  // peer id (the room code from the link). Color isn't known yet - it
+  // arrives via the 'assignColor' handshake message once connected.
   const joinGame = useCallback(
     (roomId: string) => {
       setStatus('connecting');
-      setMyColor('b');
+      setMyColor(null);
       setErrorMessage(null);
 
       const peer = new Peer();
@@ -92,7 +122,7 @@ export function useMultiplayer() {
 
       peer.on('open', () => {
         const conn = peer.connect(roomId, { reliable: true });
-        wireConnection(conn);
+        wireConnection(conn, false);
       });
 
       peer.on('error', (err) => {
@@ -124,7 +154,7 @@ export function useMultiplayer() {
 
   const sendAction = useCallback((action: GameAction) => {
     if (connRef.current && connRef.current.open) {
-      connRef.current.send(action);
+      connRef.current.send({ kind: 'action', action } satisfies WireMessage);
     }
   }, []);
 
