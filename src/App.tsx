@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Chessboard } from 'react-chessboard';
-import { useChessGame } from './game/useChessGame';
+import { useChessGame, type Color } from './game/useChessGame';
 import { useMultiplayer, type GameAction } from './game/useMultiplayer';
 import { allMutators } from './roguelike/mutators';
 import { allShopItems } from './roguelike/shop';
@@ -38,6 +38,12 @@ function App() {
 } = useChessGame(activeMutators);
   const multiplayer = useMultiplayer();
   const turnColor = game.turn();
+
+
+  const getOwnedAbilityNames = (color: Color) =>
+  Object.entries(abilities[color])
+    .filter(([, count]) => count > 0)
+    .map(([id]) => allShopItems.find((item) => item.id === id)?.name ?? id);
 
   // Applies an action that arrived from the peer by calling the exact same
   // local function the acting player used. Both browsers run identical,
@@ -225,8 +231,9 @@ const chessboardOptions = {
     );
   }
 
-  return (
-    <div style={{ width: '520px', margin: '40px auto' }}>
+ return (
+    <div style={{ display: 'flex', gap: '24px', width: '880px', margin: '40px auto', alignItems: 'flex-start' }}>
+    <div style={{ width: '520px' }}>
 
 {multiplayer.status === 'idle' && (
   <div style={{ textAlign: 'center', marginBottom: '10px' }}>
@@ -274,6 +281,40 @@ const chessboardOptions = {
         {souls.b}
       </p>
 
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          maxWidth: '480px',
+          margin: '10px auto',
+          fontSize: '0.9em',
+        }}
+      >
+        <div style={{ textAlign: 'left' }}>
+          <strong>White's abilities:</strong>
+          {getOwnedAbilityNames('w').length === 0 ? (
+            <p style={{ color: '#999', fontStyle: 'italic' }}>None yet</p>
+          ) : (
+            <ul style={{ margin: '4px 0', paddingLeft: '18px' }}>
+              {getOwnedAbilityNames('w').map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <strong>Black's abilities:</strong>
+          {getOwnedAbilityNames('b').length === 0 ? (
+            <p style={{ color: '#999', fontStyle: 'italic' }}>None yet</p>
+          ) : (
+            <ul style={{ margin: '4px 0', paddingLeft: '18px', listStylePosition: 'inside' }}>
+              {getOwnedAbilityNames('b').map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
       {(abilities[turnColor]['backward-pawn'] ?? 0) > 0 && gameActive && (
   <p style={{ textAlign: 'center', fontStyle: 'italic', color: '#555' }}>
     Retreating Pawns active — your pawns can step back one square.
@@ -373,50 +414,7 @@ const chessboardOptions = {
         <button onClick={handleResetGame}>Reset Board</button>
       </div>
 
-      {shopOpenFor && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            background: 'rgba(0,0,0,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div style={{ 
-            background: 'white',
-            padding: '20px',
-            borderRadius: '8px', 
-            width: '320px', 
-            maxHeight: '80vh',       // FIX: Limits height to 80% of the viewport
-            overflowY: 'auto',       // FIX: Adds a scrollbar if items overflow
-            }}>
-            <h2>Souls Shop — {shopOpenFor === 'w' ? 'White' : 'Black'}</h2>
-            <p>Souls available: {souls[shopOpenFor]}</p>
-            {allShopItems.map((item) => {
-             const alreadyOwned = (abilities[shopOpenFor][item.id] ?? 0) > 0;
-             return (
-              <div key={item.id} style={{ marginBottom: '12px' }}>
-              <strong>{item.name}</strong> — {item.cost} souls
-               <p style={{ fontSize: '0.9em', color: '#555' }}>{item.description}</p>
-                {alreadyOwned ? (
-                <p style={{ fontStyle: 'italic', color: '#888' }}>Already owned</p>
-                   ) : (
-                  <button disabled={souls[shopOpenFor] < item.cost} onClick={() => handleBuyItem(item)}>
-                   Buy
-                  </button>
-                    )}
-               </div>
-                );
-              })}
-            <button onClick={closeShop}>Close without buying</button>
-          </div>
-        </div>
-      )}
+
 
 {pendingPromotion && (
   <div
@@ -484,8 +482,53 @@ const chessboardOptions = {
 )}
 
 
+ </div>
+
+    <div
+      style={{
+        width: '320px',
+        border: '1px solid #ccc',
+        borderRadius: '8px',
+        padding: '16px',
+        position: 'sticky',
+        top: '20px',
+      }}
+    >
+      <h2 style={{ marginTop: 0 }}>Souls Shop</h2>
+      {shopOpenFor ? (
+        <p>
+          Shopping as {shopOpenFor === 'w' ? 'White' : 'Black'} — {souls[shopOpenFor]} souls available
+        </p>
+      ) : (
+        <p style={{ color: '#999', fontStyle: 'italic' }}>
+          Arm the shop and make your move to unlock buying.
+        </p>
+      )}
+      {allShopItems.map((item) => {
+        const previewColor = shopOpenFor ?? turnColor;
+        const alreadyOwned = (abilities[previewColor][item.id] ?? 0) > 0;
+        const canBuy = shopOpenFor !== null && souls[shopOpenFor] >= item.cost && !alreadyOwned;
+        return (
+          <div key={item.id} style={{ marginBottom: '12px', opacity: shopOpenFor ? 1 : 0.6 }}>
+            <strong>{item.name}</strong> — {item.cost} souls
+            <p style={{ fontSize: '0.9em', color: '#555' }}>{item.description}</p>
+            {alreadyOwned ? (
+              <p style={{ fontStyle: 'italic', color: '#888' }}>Already owned</p>
+            ) : (
+              <button disabled={!canBuy} onClick={() => handleBuyItem(item)}>
+                Buy
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {shopOpenFor && (
+        <button onClick={closeShop} style={{ marginTop: '8px' }}>
+          Close without buying
+        </button>
+      )}
     </div>
+  </div>
   );
 }
-
 export default App;
